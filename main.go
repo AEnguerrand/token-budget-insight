@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	DefaultBudgetInsightURITemplateWebview   = "https://{{.domain}}.biapi.pro/2.0/auth/webview/connect?client_id={{.clientId}}&redirect_uri={{.yourCallbackUri}}"
+	DefaultBudgetInsightURITemplateWebview   = "https://{{.domain}}.biapi.pro/2.0/auth/webview/connect?client_id={{.clientID}}&redirect_uri={{.yourCallbackURI}}"
 	DefaultBudgetInsightURITemplateAuthToken = "https://{{.domain}}.biapi.pro/2.0/auth/token/access"
 )
 
@@ -24,16 +24,16 @@ type AppConfiguration struct {
 			authToken string
 		}
 		domain          string
-		clientId        string
+		clientID        string
 		clientSecret    string
-		yourCallbackUri string
+		yourCallbackURI string
 	}
 }
 
 type BudgetInsightAuth struct {
 	code         string
 	result       string
-	connectionId string
+	connectionID string
 }
 
 var appConfig AppConfiguration
@@ -48,8 +48,8 @@ func webviewRedirect(w http.ResponseWriter, r *http.Request) {
 
 	parms := map[string]string{
 		"domain":          appConfig.budgetInsight.domain,
-		"clientId":        appConfig.budgetInsight.clientId,
-		"yourCallbackUri": appConfig.budgetInsight.yourCallbackUri,
+		"clientID":        appConfig.budgetInsight.clientID,
+		"yourCallbackURI": appConfig.budgetInsight.yourCallbackURI,
 	}
 
 	var tplURI bytes.Buffer
@@ -73,12 +73,14 @@ func webviewCallback(w http.ResponseWriter, r *http.Request) {
 	if err := queryValues.Get("error"); err != "" {
 		log.Printf("Callback error: %s", err)
 		fmt.Fprintf(w, "Callback error: %s", err)
+
 		return
 	}
 
 	userAuth := BudgetInsightAuth{
 		code:         queryValues.Get("code"),
-		connectionId: queryValues.Get("connection_id"),
+		connectionID: queryValues.Get("connection_id"),
+		result:       "none",
 	}
 
 	getAuthToken(&userAuth)
@@ -96,6 +98,7 @@ func getAuthToken(userAuth *BudgetInsightAuth) {
 	parms := map[string]string{
 		"domain": appConfig.budgetInsight.domain,
 	}
+
 	var tplURI bytes.Buffer
 	if err := tmpl.Execute(&tplURI, parms); err != nil {
 		panic(err)
@@ -103,8 +106,10 @@ func getAuthToken(userAuth *BudgetInsightAuth) {
 
 	payload := map[string]interface{}{
 		"code":          userAuth.code,
-		"client_id":     appConfig.budgetInsight.clientId,
-		"client_secret": appConfig.budgetInsight.clientSecret}
+		"client_id":     appConfig.budgetInsight.clientID,
+		"client_secret": appConfig.budgetInsight.clientSecret,
+	}
+
 	byts, err := json.Marshal(payload)
 	if err != nil {
 		panic(err)
@@ -140,15 +145,15 @@ func appInit() {
 	flag.StringVar(&appConfig.budgetInsight.URITemplate.authToken, "URITemplate.authToken", DefaultBudgetInsightURITemplateAuthToken, "Change default budgetInsight.URITemplate.authToken")
 
 	flag.StringVar(&appConfig.budgetInsight.domain, "domain", "none", "Domain for Budget Insight")
-	flag.StringVar(&appConfig.budgetInsight.clientId, "clientid", "none", "ClientID for App Budget Insight")
+	flag.StringVar(&appConfig.budgetInsight.clientID, "clientid", "none", "ClientID for App Budget Insight")
 	flag.StringVar(&appConfig.budgetInsight.clientSecret, "clientsecret", "none", "ClientSecret for App Budget Insight")
-	flag.StringVar(&appConfig.budgetInsight.yourCallbackUri, "yourcallbackuri", "none", "CallbackUri call after the webview of Budget Insight")
+	flag.StringVar(&appConfig.budgetInsight.yourCallbackURI, "yourcallbackuri", "none", "CallbackUri call after the webview of Budget Insight")
 	flag.Parse()
 
 	log.Printf("%+v\n", appConfig)
 
-	if appConfig.budgetInsight.domain == "none" || appConfig.budgetInsight.clientId == "none" || appConfig.budgetInsight.clientSecret == "none" || appConfig.budgetInsight.yourCallbackUri == "none" {
-		log.Print("Mandatory flags is not set (domain, clientId, yourcallbackuri, clientSecret)")
+	if appConfig.budgetInsight.domain == "none" || appConfig.budgetInsight.clientID == "none" || appConfig.budgetInsight.clientSecret == "none" || appConfig.budgetInsight.yourCallbackURI == "none" {
+		log.Print("Mandatory flags is not set (domain, clientId, yourCallbackURI, clientSecret)")
 		log.Print("Usage: ")
 		flag.PrintDefaults()
 		os.Exit(-1)
@@ -156,12 +161,14 @@ func appInit() {
 }
 
 func main() {
-
 	appInit()
 
 	http.HandleFunc("/", homepage)
 	http.HandleFunc("/webview", webviewRedirect)
 	http.HandleFunc("/callback", webviewCallback)
 
-	http.ListenAndServe(":8080", nil)
+	err := http.ListenAndServe(":8080", nil)
+	if err != nil {
+		panic(err)
+	}
 }
