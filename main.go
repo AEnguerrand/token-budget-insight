@@ -2,8 +2,10 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"flag"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
@@ -12,7 +14,7 @@ import (
 
 const (
 	DefaultBudgetInsightURITemplateWebview   = "https://{{.domain}}.biapi.pro/2.0/auth/webview/connect?client_id={{.clientId}}&redirect_uri={{.yourCallbackUri}}"
-	DefaultBudgetInsightURITemplateAuthToken = "https://{domain}.biapi.pro/2.0/auth/token/access"
+	DefaultBudgetInsightURITemplateAuthToken = "https://{{.domain}}.biapi.pro/2.0/auth/token/access"
 )
 
 type AppConfiguration struct {
@@ -23,8 +25,15 @@ type AppConfiguration struct {
 		}
 		domain          string
 		clientId        string
+		clientSecret    string
 		yourCallbackUri string
 	}
+}
+
+type BudgetInsightAuth struct {
+	code         string
+	result       string
+	connectionId string
 }
 
 var appConfig AppConfiguration
@@ -43,13 +52,13 @@ func webviewRedirect(w http.ResponseWriter, r *http.Request) {
 		"yourCallbackUri": appConfig.budgetInsight.yourCallbackUri,
 	}
 
-	var tplredirectURI bytes.Buffer
-	if err := tmpl.Execute(&tplredirectURI, parms); err != nil {
+	var tplURI bytes.Buffer
+	if err := tmpl.Execute(&tplURI, parms); err != nil {
 		panic(err)
 	}
 
-	log.Printf("Redirect to the Budget Insight Webview: %s", tplredirectURI.String())
-	http.Redirect(w, r, tplredirectURI.String(), http.StatusTemporaryRedirect)
+	log.Printf("Redirect to the Budget Insight Webview: %s", tplURI.String())
+	http.Redirect(w, r, tplURI.String(), http.StatusTemporaryRedirect)
 }
 
 func homepage(w http.ResponseWriter, r *http.Request) {
@@ -57,8 +66,70 @@ func homepage(w http.ResponseWriter, r *http.Request) {
 }
 
 func webviewCallback(w http.ResponseWriter, r *http.Request) {
-	fmt.Fprint(w, "Callback URI")
-	log.Printf("Full URI: %s\n", r.RequestURI)
+	log.Print("Callback URI trigger")
+
+	queryValues := r.URL.Query()
+
+	if err := queryValues.Get("error"); err != "" {
+		log.Printf("Callback error: %s", err)
+		fmt.Fprintf(w, "Callback error: %s", err)
+		return
+	}
+
+	userAuth := BudgetInsightAuth{
+		code:         queryValues.Get("code"),
+		connectionId: queryValues.Get("connection_id"),
+	}
+
+	getAuthToken(&userAuth)
+
+	log.Printf("Result Auth (client secret):\n %s", userAuth.result)
+	fmt.Fprintf(w, "Result Auth (client secret): %s", userAuth.result)
+}
+
+func getAuthToken(userAuth *BudgetInsightAuth) {
+	tmpl, err := template.New("webview").Parse(appConfig.budgetInsight.URITemplate.authToken)
+	if err != nil {
+		panic(err)
+	}
+
+	parms := map[string]string{
+		"domain": appConfig.budgetInsight.domain,
+	}
+	var tplURI bytes.Buffer
+	if err := tmpl.Execute(&tplURI, parms); err != nil {
+		panic(err)
+	}
+
+	payload := map[string]interface{}{
+		"code":          userAuth.code,
+		"client_id":     appConfig.budgetInsight.clientId,
+		"client_secret": appConfig.budgetInsight.clientSecret}
+	byts, err := json.Marshal(payload)
+	if err != nil {
+		panic(err)
+	}
+
+	request, err := http.NewRequest(http.MethodPost, tplURI.String(), bytes.NewBuffer(byts))
+	if err != nil {
+		panic(err)
+	}
+	request.Header.Set("Content-Type", "application/json; charset=UTF-8")
+
+	client := &http.Client{}
+	log.Printf("Send POST to the Budget Insight API: %s", tplURI.String())
+	response, err := client.Do(request)
+	if err != nil {
+		panic(err)
+	}
+	defer response.Body.Close()
+
+	body, _ := ioutil.ReadAll(response.Body)
+	if response.StatusCode != http.StatusOK {
+		log.Printf("Error API token: %s", string(body))
+	}
+
+	userAuth.result = string(body)
 }
 
 func appInit() {
@@ -69,14 +140,15 @@ func appInit() {
 	flag.StringVar(&appConfig.budgetInsight.URITemplate.authToken, "URITemplate.authToken", DefaultBudgetInsightURITemplateAuthToken, "Change default budgetInsight.URITemplate.authToken")
 
 	flag.StringVar(&appConfig.budgetInsight.domain, "domain", "none", "Domain for Budget Insight")
-	flag.StringVar(&appConfig.budgetInsight.clientId, "clientid", "none", "ClientID for Budget Insight")
+	flag.StringVar(&appConfig.budgetInsight.clientId, "clientid", "none", "ClientID for App Budget Insight")
+	flag.StringVar(&appConfig.budgetInsight.clientSecret, "clientsecret", "none", "ClientSecret for App Budget Insight")
 	flag.StringVar(&appConfig.budgetInsight.yourCallbackUri, "yourcallbackuri", "none", "CallbackUri call after the webview of Budget Insight")
 	flag.Parse()
 
 	log.Printf("%+v\n", appConfig)
 
-	if appConfig.budgetInsight.domain == "none" || appConfig.budgetInsight.clientId == "none" || appConfig.budgetInsight.yourCallbackUri == "none" {
-		log.Print("Mandatory flags is not set (domain, clientId, yourCallbackUri)")
+	if appConfig.budgetInsight.domain == "none" || appConfig.budgetInsight.clientId == "none" || appConfig.budgetInsight.clientSecret == "none" || appConfig.budgetInsight.yourCallbackUri == "none" {
+		log.Print("Mandatory flags is not set (domain, clientId, yourcallbackuri, clientSecret)")
 		log.Print("Usage: ")
 		flag.PrintDefaults()
 		os.Exit(-1)
